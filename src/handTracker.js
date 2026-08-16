@@ -150,20 +150,36 @@ export class HandTracker {
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, options);
     }
 
-    // 3. Start Webcam stream with getUserMedia (direct control, no Camera utils)
+    // 3. Start Webcam stream with facingMode: "user" (default for mobile)
+    await this.startCamera(deviceId);
+
+    // 4. Start the requestAnimationFrame render loop
+    this.startLoop();
+  }
+
+  async startCamera(deviceId = null) {
+    if (this.videoEl && this.videoEl.srcObject) {
+      this.videoEl.srcObject.getTracks().forEach(t => t.stop());
+    }
+
+    const videoConstraints = {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 60, min: 30 }
+    };
+
+    if (deviceId) {
+      videoConstraints.deviceId = { exact: deviceId };
+    } else {
+      videoConstraints.facingMode = "user";
+    }
+
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 60, min: 30 }
-      }
+      video: videoConstraints
     });
     this.videoEl.srcObject = stream;
     await this.videoEl.play();
     this.isTracking = true;
-
-    // 4. Start the requestAnimationFrame render loop
-    this.startLoop();
   }
 
   startLoop() {

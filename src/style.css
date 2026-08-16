@@ -621,24 +621,161 @@ body.cyber-theme {
   color: var(--cyan-neon);
 }
 
-/* Mobile Responsiveness */
+/* --------------------------------------------------------------------------
+   MOBILE & TABLET RESPONSIVENESS (iOS & Android)
+   -------------------------------------------------------------------------- */
 @media (max-width: 768px) {
+  .app-container {
+    padding: 8px;
+    gap: 8px;
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
   .app-header {
-    flex-direction: column;
-    gap: 10px;
-    align-items: stretch;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  .header-brand {
+    gap: 8px;
+  }
+
+  .brand-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-text h1 {
+    font-size: 1rem;
+  }
+
+  .brand-badge {
+    font-size: 0.6rem;
+    padding: 1px 6px;
   }
 
   .header-telemetry {
-    justify-content: space-around;
+    width: 100%;
+    order: 3;
+    justify-content: space-between;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    margin-top: 2px;
+  }
+
+  .telemetry-item {
+    font-size: 0.75rem;
+    gap: 4px;
+  }
+
+  .viewport-wrapper {
+    min-height: auto;
+  }
+
+  .canvas-container {
+    aspect-ratio: 4 / 3;
+    max-height: 52vh;
+    border-radius: var(--radius-sm);
   }
 
   .floating-controls {
-    flex-direction: column;
-    align-items: stretch;
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .control-group {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .control-group:first-child {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+    gap: 6px;
+  }
+
+  .btn-mode {
+    justify-content: center;
+    padding: 8px 6px;
+    font-size: 0.8rem;
+    min-height: 42px;
+  }
+
+  .select-cyber {
+    width: 100%;
+    font-size: 0.85rem;
+    min-height: 42px;
+  }
+
+  .btn-snap, .btn-rec {
+    flex: 1;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 0.85rem;
+  }
+
+  .effect-panel {
+    padding: 12px 14px;
+    gap: 10px;
   }
 
   .effects-grid {
-    grid-template-columns: repeat(3, 1fr);
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    gap: 8px;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .effect-card {
+    flex: 0 0 85px;
+    scroll-snap-align: start;
+    padding: 8px 4px;
+    gap: 6px;
+  }
+
+  .effect-preview {
+    width: 36px;
+    height: 36px;
+  }
+
+  .effect-name {
+    font-size: 0.7rem;
+  }
+
+  .effect-params {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .param-slider-group {
+    min-width: 100%;
+  }
+
+  .cyber-range::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+
+  .modal-card {
+    padding: 16px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .brand-text h1 {
+    font-size: 0.9rem;
+  }
+
+  .canvas-container {
+    aspect-ratio: 3 / 4;
+    max-height: 50vh;
   }
 }

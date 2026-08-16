@@ -163,7 +163,15 @@ class App {
 
     // Camera Switcher
     this.cameraSelectEl.addEventListener('change', async (e) => {
+      const deviceId = e.target.value;
       this.sound.playClick();
+      if (deviceId) {
+        try {
+          await this.tracker.startCamera(deviceId);
+        } catch (err) {
+          console.error('Gagal mengganti kamera:', err);
+        }
+      }
     });
 
     // Audio Toggle
