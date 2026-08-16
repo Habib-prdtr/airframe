@@ -1,5 +1,5 @@
 /* ==========================================================================
-   HAND TRACKER ENGINE v2.2 — MOBILE 60 FPS OPTIMIZED
+   HAND TRACKER ENGINE v4.0 — UNCOUPLED 60 FPS MOBILE PIPELINE
    ========================================================================== */
 
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
@@ -74,6 +74,10 @@ export class HandTracker {
     this.lastFrameTime = performance.now();
     this.lastAiTime = 0;
     this.fps = 60;
+    this.isAiBusy = false;
+
+    // Detect mobile device
+    this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     this.kalmanFilters = [
       Array.from({ length: 21 }, () => new KalmanPoint()),
@@ -105,10 +109,13 @@ export class HandTracker {
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
     );
 
+    // Use Lite model specifically optimized for mobile devices
+    const modelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/lite/latest/hand_landmarker.task";
+
     try {
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+          modelAssetPath: modelUrl,
           delegate: "GPU"
         },
         runningMode: "VIDEO",
@@ -121,7 +128,7 @@ export class HandTracker {
       console.warn("GPU delegate unavailable, falling back to CPU:", gpuErr);
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+          modelAssetPath: modelUrl,
           delegate: "CPU"
         },
         runningMode: "VIDEO",
@@ -137,7 +144,7 @@ export class HandTracker {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width: { ideal: 640 }, // Optimized resolution for mobile high FPS
+          width: { ideal: 640 },
           height: { ideal: 480 }
         }
       });
@@ -173,31 +180,37 @@ export class HandTracker {
       const timestamp = this.videoEl.currentTime;
       const dt = Math.max(frameDelta, 1 / 120);
 
-      // AI Inference Throttled to ~30 FPS on Mobile (every 30ms) to save CPU/thermal budget
-      // While canvas render loop runs at buttery smooth 60 FPS using Kalman Extrapolation!
-      const aiMinInterval = 30; // 30ms = 33 FPS AI rate
-      const shouldRunAi = (now - this.lastAiTime) >= aiMinInterval && timestamp !== this.lastTimestamp;
-
-      let handCount = 0;
-
-      if (shouldRunAi) {
+      // Async Non-Blocking AI Execution on Mobile
+      const aiMinInterval = this.isMobile ? 40 : 16; // 25 FPS AI on Mobile, 60 FPS on Desktop
+      if (!this.isAiBusy && (now - this.lastAiTime) >= aiMinInterval && timestamp !== this.lastTimestamp) {
         this.lastAiTime = now;
         this.lastTimestamp = timestamp;
+        this.isAiBusy = true;
 
-        const results = this.handLandmarker.detectForVideo(this.videoEl, now);
-        handCount = results.landmarks ? results.landmarks.length : 0;
+        // Run detection in non-blocking async microtask
+        setTimeout(() => {
+          if (this.handLandmarker && this.videoEl && this.videoEl.readyState >= 2) {
+            try {
+              const results = this.handLandmarker.detectForVideo(this.videoEl, now);
+              const handCount = results.landmarks ? results.landmarks.length : 0;
 
-        if (handCount > 0) {
-          this.missedFrames = 0;
-          this.processLandmarksKalman(results.landmarks, this.canvasEl.width, this.canvasEl.height, dt);
-          if (this.mode !== 'lock') {
-            this.computeFramingQuad(this.canvasEl.width, this.canvasEl.height);
+              if (handCount > 0) {
+                this.missedFrames = 0;
+                this.processLandmarksKalman(results.landmarks, this.canvasEl.width, this.canvasEl.height, dt);
+                if (this.mode !== 'lock') {
+                  this.computeFramingQuad(this.canvasEl.width, this.canvasEl.height);
+                }
+              } else {
+                this.handleTrackingLoss(dt);
+              }
+            } catch (err) {
+              console.warn("AI detect error:", err);
+            }
           }
-        } else {
-          this.handleTrackingLoss(dt);
-        }
+          this.isAiBusy = false;
+        }, 0);
       } else {
-        // Between AI inference ticks: extrapolate landmarks for 60 FPS fluidity
+        // Continuous 60 FPS Kalman Extrapolation for butter-smooth camera rendering
         if (this.currentBox.isDetected && this.smoothedLandmarks.length > 0) {
           this.extrapolateLandmarks(this.canvasEl.width, this.canvasEl.height, dt);
           if (this.mode !== 'lock') {

@@ -1,9 +1,5 @@
 /* ==========================================================================
-   EFFECTS ENGINE v3.0 — PURE GPU HARDWARE ACCELERATED PIPELINE
-   
-   - ZERO CPU getImageData / putImageData readback stalls
-   - 100% Native GPU Canvas Filters & Composite Operations
-   - Solid 60-120 FPS on all mobile devices & laptops
+   EFFECTS ENGINE v4.0 — MOBILE WEBKIT SAFE HARDWARE ACCELERATION
    ========================================================================== */
 
 export class EffectsEngine {
@@ -12,14 +8,15 @@ export class EffectsEngine {
     this.intensity = 0.8;
     this.scaleSize = 12;
 
-    // Buffer canvas for zero-CPU scaling/blitting
     this.bufferCanvas = document.createElement('canvas');
     this.bufferCtx = this.bufferCanvas.getContext('2d');
 
-    // Matrix Rain state
     this.matrixColumns = [];
     this.matrixChars = '0123456789ABCDEFｦｱｳｴｵｶｷｹｺｻｼｽｾｿﾀﾂﾃﾅﾆﾇﾈﾊﾋﾎﾏﾐﾑﾒﾓﾔﾕﾗﾘﾜ';
     this.glitchFrame = 0;
+
+    // Mobile WebKit Detection
+    this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   }
 
   setEffect(effectName) {
@@ -35,7 +32,7 @@ export class EffectsEngine {
     const width = ctx.canvas.width;
     const height = ctx.canvas.height;
 
-    // 1. Draw Base Video Frame (GPU Hardware Accelerated)
+    // 1. Unconditional Base Video Draw (60 FPS Smooth Camera Feed)
     ctx.save();
     if (isMirrored) {
       ctx.translate(width, 0);
@@ -66,56 +63,60 @@ export class EffectsEngine {
     ctx.closePath();
     ctx.clip();
 
-    // 4. Render GPU Hardware-Accelerated Effect Inside Quad
+    // 4. Render Mobile-Safe Effect Inside Quad
     switch (this.activeEffect) {
       case 'neon':
-        this.renderNeonGPU(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
+        this.renderNeon(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
         break;
       case 'pixelate':
-        this.renderPixelateGPU(ctx, rx, ry, rw, rh);
+        this.renderPixelate(ctx, rx, ry, rw, rh);
         break;
       case 'thermal':
-        this.renderThermalGPU(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
+        this.renderThermal(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
         break;
       case 'glitch':
-        this.renderGlitchGPU(ctx, rx, ry, rw, rh);
+        this.renderGlitch(ctx, rx, ry, rw, rh);
         break;
       case 'matrix':
-        this.renderMatrixGPU(ctx, rx, ry, rw, rh);
+        this.renderMatrix(ctx, rx, ry, rw, rh);
         break;
       case 'ascii':
-        this.renderAsciiGPU(ctx, rx, ry, rw, rh);
+        this.renderAscii(ctx, rx, ry, rw, rh);
         break;
       case 'magnifier':
-        this.renderMagnifierGPU(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
+        this.renderMagnifier(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
         break;
       case 'vortex':
-        this.renderVortexGPU(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
+        this.renderVortex(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
         break;
       case 'invert':
-        this.renderInvertGPU(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
+        this.renderInvert(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
         break;
       default:
-        this.renderNeonGPU(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
+        this.renderNeon(ctx, video, rx, ry, rw, rh, width, height, isMirrored);
     }
 
     ctx.restore();
   }
 
-  // --------------------------------------------------------------------------
-  // GPU HARDWARE ACCELERATED FILTERS (0ms CPU READBACK OVERHEAD)
-  // --------------------------------------------------------------------------
-
-  // 1. Cyber Neon GPU (Native filter: contrast + saturate + hue shift)
-  renderNeonGPU(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
+  // 1. Cyber Neon Effect (Mobile WebKit Safe)
+  renderNeon(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
     ctx.save();
-    ctx.filter = `contrast(${150 + 100 * this.intensity}%) saturate(${200 + 150 * this.intensity}%) hue-rotate(170deg) brightness(110%)`;
-    this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    if (!this.isMobile && ctx.filter) {
+      ctx.filter = `contrast(180%) saturate(300%) hue-rotate(170deg)`;
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    } else {
+      // Mobile-fast composite tint
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+      ctx.globalCompositeOperation = 'color-dodge';
+      ctx.fillStyle = 'rgba(0, 243, 255, 0.6)';
+      ctx.fillRect(x, y, w, h);
+    }
     ctx.restore();
   }
 
-  // 2. 8-Bit Pixelate GPU (Zero-CPU downscale & upscale blit)
-  renderPixelateGPU(ctx, x, y, w, h) {
+  // 2. 8-Bit Pixelate Effect (Zero-CPU Fast Blit)
+  renderPixelate(ctx, x, y, w, h) {
     const pSize = Math.max(4, Math.round(this.scaleSize));
     const smallW = Math.max(1, Math.floor(w / pSize));
     const smallH = Math.max(1, Math.floor(h / pSize));
@@ -125,26 +126,35 @@ export class EffectsEngine {
       this.bufferCanvas.height = smallH;
     }
 
-    // Downscale onto buffer
     this.bufferCtx.imageSmoothingEnabled = false;
     this.bufferCtx.drawImage(ctx.canvas, x, y, w, h, 0, 0, smallW, smallH);
 
-    // Upscale back with nearest-neighbor crisp pixels
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.bufferCanvas, 0, 0, smallW, smallH, x, y, w, h);
     ctx.imageSmoothingEnabled = true;
   }
 
-  // 3. Thermal Heat GPU (Native filter: invert + hue-rotate + contrast)
-  renderThermalGPU(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
+  // 3. Thermal Heatmap Effect (Mobile WebKit Safe)
+  renderThermal(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
     ctx.save();
-    ctx.filter = `invert(90%) hue-rotate(220deg) contrast(${200 + 100 * this.intensity}%) saturate(300%)`;
-    this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    if (!this.isMobile && ctx.filter) {
+      ctx.filter = `invert(90%) hue-rotate(220deg) contrast(200%)`;
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    } else {
+      // Mobile-fast composite thermal simulation
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+      ctx.globalCompositeOperation = 'difference';
+      ctx.fillStyle = '#00ffff';
+      ctx.fillRect(x, y, w, h);
+      ctx.globalCompositeOperation = 'overlay';
+      ctx.fillStyle = '#ffb700';
+      ctx.fillRect(x, y, w, h);
+    }
     ctx.restore();
   }
 
-  // 4. RGB Glitch GPU (Chromatic Offset Blit)
-  renderGlitchGPU(ctx, x, y, w, h) {
+  // 4. RGB Glitch Effect
+  renderGlitch(ctx, x, y, w, h) {
     this.glitchFrame += 1;
     const offset = Math.round(8 * this.intensity);
 
@@ -153,23 +163,17 @@ export class EffectsEngine {
       this.bufferCanvas.height = h;
     }
 
-    // Copy original ROI
     this.bufferCtx.drawImage(ctx.canvas, x, y, w, h, 0, 0, w, h);
 
-    // Render Red Channel offset
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
-    ctx.filter = 'drop-shadow(-4px 0px 0px #ff0055)';
     ctx.drawImage(this.bufferCanvas, x + offset, y, w, h);
-
-    // Render Cyan Channel offset
-    ctx.filter = 'drop-shadow(4px 0px 0px #00f3ff)';
     ctx.drawImage(this.bufferCanvas, x - offset, y, w, h);
     ctx.restore();
   }
 
-  // 5. Matrix Digital Code Rain GPU
-  renderMatrixGPU(ctx, x, y, w, h) {
+  // 5. Matrix Code Rain
+  renderMatrix(ctx, x, y, w, h) {
     ctx.save();
     ctx.fillStyle = `rgba(0, 20, 5, ${0.75 * this.intensity})`;
     ctx.fillRect(x, y, w, h);
@@ -183,8 +187,6 @@ export class EffectsEngine {
 
     ctx.fillStyle = '#00ff66';
     ctx.font = `bold ${fontSize}px monospace`;
-    ctx.shadowColor = '#00ff66';
-    ctx.shadowBlur = 6;
 
     this.matrixColumns.forEach((cy, colIdx) => {
       const char = this.matrixChars.charAt(Math.floor(Math.random() * this.matrixChars.length));
@@ -203,18 +205,15 @@ export class EffectsEngine {
     ctx.restore();
   }
 
-  // 6. ASCII Code Filter GPU
-  renderAsciiGPU(ctx, x, y, w, h) {
+  // 6. ASCII Code Filter
+  renderAscii(ctx, x, y, w, h) {
     ctx.save();
-    ctx.filter = 'contrast(200%) grayscale(100%)';
     ctx.fillStyle = '#040810';
     ctx.fillRect(x, y, w, h);
 
     const charSize = Math.max(10, Math.round(this.scaleSize));
     ctx.font = `bold ${charSize}px monospace`;
     ctx.fillStyle = '#00f3ff';
-    ctx.shadowColor = '#00f3ff';
-    ctx.shadowBlur = 4;
 
     const chars = ['@', '#', '$', '%', '*', '+', ';', ':', '.', ' '];
 
@@ -227,8 +226,8 @@ export class EffectsEngine {
     ctx.restore();
   }
 
-  // 7. Magnifier Fisheye Lens GPU
-  renderMagnifierGPU(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
+  // 7. Magnifier Fisheye Lens
+  renderMagnifier(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
     const zoom = 1.6;
     const zw = w / zoom;
     const zh = h / zoom;
@@ -248,23 +247,36 @@ export class EffectsEngine {
     ctx.restore();
   }
 
-  // 8. Vortex Spiral GPU
-  renderVortexGPU(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
+  // 8. Vortex Spiral
+  renderVortex(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
     ctx.save();
-    ctx.filter = `hue-rotate(280deg) contrast(180%) saturate(250%)`;
-    this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    if (!this.isMobile && ctx.filter) {
+      ctx.filter = `hue-rotate(280deg) contrast(180%)`;
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    } else {
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+      ctx.globalCompositeOperation = 'exclusion';
+      ctx.fillStyle = '#ff0055';
+      ctx.fillRect(x, y, w, h);
+    }
     ctx.restore();
   }
 
-  // 9. Invert X-Ray GPU
-  renderInvertGPU(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
+  // 9. Invert X-Ray
+  renderInvert(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
     ctx.save();
-    ctx.filter = `invert(100%) contrast(160%)`;
-    this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    if (!this.isMobile && ctx.filter) {
+      ctx.filter = `invert(100%) contrast(160%)`;
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+    } else {
+      this.drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored);
+      ctx.globalCompositeOperation = 'difference';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x, y, w, h);
+    }
     ctx.restore();
   }
 
-  // Helper method for hardware accelerated regional video draw
   drawSourceRegion(ctx, video, x, y, w, h, canvasWidth, canvasHeight, isMirrored) {
     if (isMirrored) {
       ctx.save();
