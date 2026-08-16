@@ -50,33 +50,61 @@ class App {
       await this.enumerateCameras();
       await this.tracker.init(this.videoEl, this.canvasEl);
 
-      // Listen for video metadata to dynamically sync aspect ratio
       this.videoEl.addEventListener('loadedmetadata', () => this.syncCanvasAspect());
       this.videoEl.addEventListener('resize', () => this.syncCanvasAspect());
-
-      // Initial sync
       this.syncCanvasAspect();
 
       this.tracker.onFrameCallback = (data) => this.onFrameUpdate(data);
-
       this.loadingOverlay.classList.add('hidden');
     } catch (err) {
       console.error('Gagal menginisialisasi kamera atau MediaPipe:', err);
-      this.loadingOverlay.querySelector('p').textContent = 
-        'Gagal mengakses kamera. Mohon pastikan webcam terhubung dan beri izin akses di browser.';
+      this.handleInitializationError(err);
     }
+  }
+
+  handleInitializationError(err) {
+    let errorTitle = 'Gagal Mengakses Kamera';
+    let errorMessage = 'Mohon pastikan webcam terhubung dan beri izin akses di browser.';
+
+    const errName = err.name || '';
+    const errString = String(err);
+
+    if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+      errorTitle = '🔒 Izin Kamera Ditolak';
+      errorMessage = 'Browser Anda memblokir izin kamera. Klik ikon 🔒 (Gembok) di samping nama situs/URL browser lalu ubah izin Kamera menjadi **Izinkan (Allow)**.';
+    } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+      errorTitle = '⚠️ Kamera Sedang Digunakan';
+      errorMessage = 'Kamera sedang dipakai oleh aplikasi lain (seperti Zoom, WhatsApp, Meet). Mohon tutup aplikasi tersebut lalu muat ulang.';
+    } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+      errorTitle = '📷 Kamera Tidak Ditemukan';
+      errorMessage = 'Perangkat kamera tidak terdeteksi pada HP/Komputer Anda.';
+    } else if (errString.includes('WASM') || errString.includes('fetch') || errString.includes('NetworkError')) {
+      errorTitle = '🔄 Cache / Koneksi Internet';
+      errorMessage = 'Ya, masalah ini sering kali disebabkan oleh **cache browser lama** atau kegagalan mengunduh berkas AI! Silakan hapus cache browser atau tekan tombol Coba Lagi.';
+    }
+
+    this.loadingOverlay.innerHTML = `
+      <div style="text-align: center; max-width: 400px; padding: 20px;">
+        <h3 style="color: #ff0055; font-size: 1.1rem; margin-bottom: 10px;">${errorTitle}</h3>
+        <p style="color: #cbd5e1; font-size: 0.85rem; line-height: 1.5; margin-bottom: 16px;">${errorMessage}</p>
+        <button id="btn-retry-camera" class="btn-cyber btn-primary" style="padding: 10px 20px;">
+          🔄 Coba Lagi / Refresh Kamera
+        </button>
+      </div>
+    `;
+
+    document.getElementById('btn-retry-camera')?.addEventListener('click', () => {
+      window.location.reload(true);
+    });
   }
 
   syncCanvasAspect() {
     const vWidth = this.videoEl.videoWidth || 1280;
     const vHeight = this.videoEl.videoHeight || 720;
 
-    // Dynamically match internal canvas resolution 1:1 with camera stream
     if (this.canvasEl.width !== vWidth || this.canvasEl.height !== vHeight) {
       this.canvasEl.width = vWidth;
       this.canvasEl.height = vHeight;
-
-      // Update CSS custom variable for container aspect-ratio without squishing/stretching!
       document.documentElement.style.setProperty('--cam-aspect', `${vWidth} / ${vHeight}`);
     }
   }
@@ -96,12 +124,10 @@ class App {
   }
 
   onFrameUpdate({ results, box, smoothedLandmarks, fps, handCount }) {
-    // Sync aspect ratio in case video resolution updated
     if (this.videoEl.videoWidth > 0 && this.canvasEl.width !== this.videoEl.videoWidth) {
       this.syncCanvasAspect();
     }
 
-    // 1. Update Telemetry UI Header
     this.fpsCounterEl.textContent = fps;
 
     if (box && box.isDetected) {
@@ -114,15 +140,11 @@ class App {
       this.framingMetricsEl.textContent = '0 x 0 px';
     }
 
-    // 2. Render Base Video + Isolated Effect inside Finger Box
     this.effects.render(this.ctx, this.videoEl, box, this.isMirrored);
-
-    // 3. Render Sci-Fi HUD Overlay
     this.hud.render(this.ctx, box, smoothedLandmarks, fps);
   }
 
   bindEvents() {
-    // Mode Buttons (Single, Dual, Lock)
     document.querySelectorAll('.btn-mode').forEach(btn => {
       btn.addEventListener('click', (e) => {
         document.querySelectorAll('.btn-mode').forEach(b => b.classList.remove('active'));
@@ -134,7 +156,6 @@ class App {
       });
     });
 
-    // Effect Preset Cards
     document.querySelectorAll('.effect-card').forEach(card => {
       card.addEventListener('click', (e) => {
         document.querySelectorAll('.effect-card').forEach(c => c.classList.remove('active'));
@@ -146,7 +167,6 @@ class App {
       });
     });
 
-    // Sliders & Controls
     const intensitySlider = document.getElementById('param-intensity');
     const scaleSlider = document.getElementById('param-scale');
     const hudStyleSelect = document.getElementById('param-hud-style');
@@ -169,19 +189,16 @@ class App {
       this.sound.playClick();
     });
 
-    // Mirror Flip
     document.getElementById('btn-flip-camera').addEventListener('click', () => {
       this.isMirrored = !this.isMirrored;
       this.tracker.setMirrored(this.isMirrored);
       this.sound.playClick();
     });
 
-    // Camera Switcher
-    this.cameraSelectEl.addEventListener('change', async (e) => {
+    this.cameraSelectEl.addEventListener('change', async () => {
       this.sound.playClick();
     });
 
-    // Audio Toggle
     const audioBtn = document.getElementById('btn-toggle-audio');
     const iconAudioOn = document.getElementById('icon-audio-on');
     const iconAudioOff = document.getElementById('icon-audio-off');
@@ -198,13 +215,9 @@ class App {
       }
     });
 
-    // Snapshot Button
     document.getElementById('btn-snapshot').addEventListener('click', () => this.takeSnapshot());
-
-    // Record Video Button
     document.getElementById('btn-record').addEventListener('click', () => this.toggleRecording());
 
-    // Help Modal
     const modalHelp = document.getElementById('modal-help');
     document.getElementById('btn-help').addEventListener('click', () => {
       modalHelp.classList.remove('hidden');
