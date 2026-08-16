@@ -1,5 +1,5 @@
 /* ==========================================================================
-   HAND TRACKER ENGINE v4.0 — UNCOUPLED 60 FPS MOBILE PIPELINE
+   HAND TRACKER ENGINE v5.0 — CAMERA-FIRST NON-BLOCKING PIPELINE
    ========================================================================== */
 
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
@@ -75,8 +75,8 @@ export class HandTracker {
     this.lastAiTime = 0;
     this.fps = 60;
     this.isAiBusy = false;
+    this.aiLoaded = false;
 
-    // Detect mobile device
     this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     this.kalmanFilters = [
@@ -105,40 +105,7 @@ export class HandTracker {
     this.videoEl = videoElement;
     this.canvasEl = canvasElement;
 
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
-    );
-
-    // Use Lite model specifically optimized for mobile devices
-    const modelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/lite/latest/hand_landmarker.task";
-
-    try {
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: modelUrl,
-          delegate: "GPU"
-        },
-        runningMode: "VIDEO",
-        numHands: 2,
-        minHandDetectionConfidence: 0.35,
-        minHandPresenceConfidence: 0.35,
-        minTrackingConfidence: 0.35
-      });
-    } catch (gpuErr) {
-      console.warn("GPU delegate unavailable, falling back to CPU:", gpuErr);
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: modelUrl,
-          delegate: "CPU"
-        },
-        runningMode: "VIDEO",
-        numHands: 2,
-        minHandDetectionConfidence: 0.35,
-        minHandPresenceConfidence: 0.35,
-        minTrackingConfidence: 0.35
-      });
-    }
-
+    // STEP 1: OPEN CAMERA STREAM FIRST (CAMERA-FIRST ARCHITECTURE)
     let stream = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -152,8 +119,8 @@ export class HandTracker {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       } catch (e2) {
-        console.error("Camera access failed:", e2);
-        throw e2;
+        console.error("Fatal Camera Permission/Device Error:", e2);
+        throw e2; // Re-throw only if camera hardware/permission is blocked
       }
     }
 
@@ -161,7 +128,52 @@ export class HandTracker {
     await this.videoEl.play();
     this.isTracking = true;
 
+    // Start 60 FPS Render Loop Immediately
     this.startLoop();
+
+    // STEP 2: LOAD AI MODEL ASYNCHRONOUSLY IN BACKGROUND (NON-BLOCKING)
+    this.loadAiModelInBackground();
+  }
+
+  async loadAiModelInBackground() {
+    try {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+
+      const modelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/lite/latest/hand_landmarker.task";
+
+      try {
+        this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: modelUrl,
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numHands: 2,
+          minHandDetectionConfidence: 0.35,
+          minHandPresenceConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+      } catch (gpuErr) {
+        this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: modelUrl,
+            delegate: "CPU"
+          },
+          runningMode: "VIDEO",
+          numHands: 2,
+          minHandDetectionConfidence: 0.35,
+          minHandPresenceConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+      }
+
+      this.aiLoaded = true;
+      console.log("MediaPipe AI Model loaded successfully in background.");
+    } catch (aiErr) {
+      console.warn("AI Model background load warning:", aiErr);
+    }
   }
 
   startLoop() {
@@ -180,14 +192,13 @@ export class HandTracker {
       const timestamp = this.videoEl.currentTime;
       const dt = Math.max(frameDelta, 1 / 120);
 
-      // Async Non-Blocking AI Execution on Mobile
-      const aiMinInterval = this.isMobile ? 40 : 16; // 25 FPS AI on Mobile, 60 FPS on Desktop
-      if (!this.isAiBusy && (now - this.lastAiTime) >= aiMinInterval && timestamp !== this.lastTimestamp) {
+      // Async AI Inference only when AI model is loaded
+      const aiMinInterval = this.isMobile ? 40 : 16;
+      if (this.aiLoaded && this.handLandmarker && !this.isAiBusy && (now - this.lastAiTime) >= aiMinInterval && timestamp !== this.lastTimestamp) {
         this.lastAiTime = now;
         this.lastTimestamp = timestamp;
         this.isAiBusy = true;
 
-        // Run detection in non-blocking async microtask
         setTimeout(() => {
           if (this.handLandmarker && this.videoEl && this.videoEl.readyState >= 2) {
             try {
@@ -210,7 +221,6 @@ export class HandTracker {
           this.isAiBusy = false;
         }, 0);
       } else {
-        // Continuous 60 FPS Kalman Extrapolation for butter-smooth camera rendering
         if (this.currentBox.isDetected && this.smoothedLandmarks.length > 0) {
           this.extrapolateLandmarks(this.canvasEl.width, this.canvasEl.height, dt);
           if (this.mode !== 'lock') {
@@ -229,7 +239,8 @@ export class HandTracker {
           box: this.currentBox,
           smoothedLandmarks: this.smoothedLandmarks,
           fps: this.fps,
-          handCount: this.currentBox.isDetected ? 1 : 0
+          handCount: this.currentBox.isDetected ? 1 : 0,
+          aiLoaded: this.aiLoaded
         });
       }
     };

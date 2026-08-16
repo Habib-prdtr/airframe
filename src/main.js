@@ -48,6 +48,8 @@ class App {
 
     try {
       await this.enumerateCameras();
+      
+      // Camera-First Architecture: Open webcam stream immediately
       await this.tracker.init(this.videoEl, this.canvasEl);
 
       this.videoEl.addEventListener('loadedmetadata', () => this.syncCanvasAspect());
@@ -55,9 +57,11 @@ class App {
       this.syncCanvasAspect();
 
       this.tracker.onFrameCallback = (data) => this.onFrameUpdate(data);
+      
+      // Hide camera loading overlay immediately as soon as video starts!
       this.loadingOverlay.classList.add('hidden');
     } catch (err) {
-      console.error('Gagal menginisialisasi kamera atau MediaPipe:', err);
+      console.error('Gagal menginisialisasi kamera:', err);
       this.handleInitializationError(err);
     }
   }
@@ -67,7 +71,6 @@ class App {
     let errorMessage = 'Mohon pastikan webcam terhubung dan beri izin akses di browser.';
 
     const errName = err.name || '';
-    const errString = String(err);
 
     if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
       errorTitle = '🔒 Izin Kamera Ditolak';
@@ -78,9 +81,6 @@ class App {
     } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
       errorTitle = '📷 Kamera Tidak Ditemukan';
       errorMessage = 'Perangkat kamera tidak terdeteksi pada HP/Komputer Anda.';
-    } else if (errString.includes('WASM') || errString.includes('fetch') || errString.includes('NetworkError')) {
-      errorTitle = '🔄 Cache / Koneksi Internet';
-      errorMessage = 'Ya, masalah ini sering kali disebabkan oleh **cache browser lama** atau kegagalan mengunduh berkas AI! Silakan hapus cache browser atau tekan tombol Coba Lagi.';
     }
 
     this.loadingOverlay.innerHTML = `
@@ -123,20 +123,24 @@ class App {
     });
   }
 
-  onFrameUpdate({ results, box, smoothedLandmarks, fps, handCount }) {
+  onFrameUpdate({ results, box, smoothedLandmarks, fps, handCount, aiLoaded }) {
     if (this.videoEl.videoWidth > 0 && this.canvasEl.width !== this.videoEl.videoWidth) {
       this.syncCanvasAspect();
     }
 
     this.fpsCounterEl.textContent = fps;
 
-    if (box && box.isDetected) {
+    if (!aiLoaded) {
+      this.gestureStatusEl.textContent = 'MEMUAT AI TRACKER...';
+      this.gestureStatusEl.className = 'value text-yellow';
+      this.framingMetricsEl.textContent = '0 x 0 px';
+    } else if (box && box.isDetected) {
       this.gestureStatusEl.textContent = handCount === 2 ? '2 TANGAN FRAME' : '1 TANGAN PINCH';
       this.gestureStatusEl.className = 'value text-cyan';
       this.framingMetricsEl.textContent = `${box.width} x ${box.height} px`;
     } else {
       this.gestureStatusEl.textContent = 'MENCARI TANGAN...';
-      this.gestureStatusEl.className = 'value text-yellow';
+      this.gestureStatusEl.className = 'value text-green';
       this.framingMetricsEl.textContent = '0 x 0 px';
     }
 
