@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hand Tracking AR Camera - Dynamic Finger Framing & Camera Shaders</title>
+  <meta name="description" content="Interactive real-time hand landmark tracking camera application with dynamic finger framing (Index & Thumb) and live post-processing filters (Cyberpunk, Pixelate, Thermal, Glitch, Matrix)." />
+  <meta name="keywords" content="hand tracking, mediapipe, ar camera, finger framing, real-time effects, computer vision, webgl, canvas" />
+  
+  <!-- Google Fonts: Outfit & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+  
+  <!-- MediaPipe Tasks Vision loaded via npm + Vite (no CDN scripts needed) -->
+
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body class="cyber-theme">
+  <div id="app" class="app-container">
+    
+    <!-- Top Bar Navigation / Header -->
+    <header class="app-header glass-card">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>AR Hand Framing Studio</h1>
+          <span class="brand-badge">PRO v1.0 • AI-Powered</span>
+        </div>
+      </div>
+
+      <div class="header-telemetry">
+        <div class="telemetry-item">
+          <span class="label">FPS</span>
+          <span id="fps-counter" class="value text-cyan">60</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="label">GESTURE</span>
+          <span id="gesture-status" class="value text-green">MENCARI TANGAN...</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="label">FRAMING</span>
+          <span id="framing-metrics" class="value text-yellow">0 x 0 px</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-toggle-audio" class="btn-icon" title="Toggle Suara UI">
+          <svg id="icon-audio-on" class="icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <svg id="icon-audio-off" class="icon hidden" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+            <path d="M9 9v6a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path>
+          </svg>
+        </button>
+
+        <button id="btn-help" class="btn-icon" title="Petunjuk Penggunaan">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Viewport Area -->
+    <main class="viewport-wrapper">
+      <!-- Hidden Source Video Stream -->
+      <video id="webcam-feed" playsinline muted></video>
+
+      <!-- Main Canvas Container -->
+      <div id="canvas-container" class="canvas-container glass-box">
+        <canvas id="output-canvas"></canvas>
+
+        <!-- Dynamic Overlay Message when Camera is loading -->
+        <div id="camera-loading" class="overlay-loading">
+          <div class="spinner"></div>
+          <p>Menghubungkan ke Kamera & Memuat AI Hand Tracking...</p>
+        </div>
+
+        <!-- Recording Indicator -->
+        <div id="rec-indicator" class="rec-badge hidden">
+          <span class="rec-dot"></span>
+          <span>REC <span id="rec-timer">00:00</span></span>
+        </div>
+      </div>
+    </main>
+
+    <!-- Floating Action Toolbar (Camera Controls, Capture & Recording) -->
+    <div class="floating-controls glass-card">
+      <div class="control-group">
+        <label for="camera-select" class="sr-only">Pilih Kamera</label>
+        <select id="camera-select" class="select-cyber">
+          <option value="">Memuat Kamera...</option>
+        </select>
+        
+        <button id="btn-flip-camera" class="btn-cyber" title="Mirror / Flip Video">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M20 17H4M4 17L8 13M4 17L8 21M4 7H20M20 7L16 3M20 7L16 11"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="control-group mode-toggle-group">
+        <button id="mode-single" class="btn-mode active" data-mode="single">
+          <span class="mode-icon">🖐️</span> 1 Tangan Pinch
+        </button>
+        <button id="mode-dual" class="btn-mode" data-mode="dual">
+          <span class="mode-icon">🙌</span> 2 Tangan Frame
+        </button>
+        <button id="mode-lock" class="btn-mode" data-mode="lock" title="Kunci Posisi Frame Terakhir">
+          <span class="mode-icon">🔒</span> Lock Frame
+        </button>
+      </div>
+
+      <div class="control-group capture-group">
+        <button id="btn-snapshot" class="btn-capture btn-snap" title="Ambil Foto Snapshot">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+          <span>Snapshot</span>
+        </button>
+
+        <button id="btn-record" class="btn-capture btn-rec" title="Merekam Video WebM">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <circle cx="12" cy="12" r="8"></circle>
+          </svg>
+          <span id="rec-btn-text">Rekam</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom Filter Gallery & Parameter Control Panel -->
+    <aside class="effect-panel glass-card">
+      <div class="panel-header">
+        <h2>Pilih Efek Segi Empat Jari</h2>
+        <span class="panel-subtitle">Filter akan diterapkan <strong>khusus di dalam segi empat</strong> telunjuk & jempol</span>
+      </div>
+
+      <!-- Effects Cards Grid -->
+      <div id="effects-grid" class="effects-grid">
+        <button class="effect-card active" data-effect="neon">
+          <div class="effect-preview preview-neon"></div>
+          <span class="effect-name">Cyber Neon</span>
+        </button>
+        <button class="effect-card" data-effect="pixelate">
+          <div class="effect-preview preview-pixel"></div>
+          <span class="effect-name">8-Bit Pixel</span>
+        </button>
+        <button class="effect-card" data-effect="thermal">
+          <div class="effect-preview preview-thermal"></div>
+          <span class="effect-name">Thermal Heat</span>
+        </button>
+        <button class="effect-card" data-effect="glitch">
+          <div class="effect-preview preview-glitch"></div>
+          <span class="effect-name">RGB Glitch</span>
+        </button>
+        <button class="effect-card" data-effect="matrix">
+          <div class="effect-preview preview-matrix"></div>
+          <span class="effect-name">Matrix Rain</span>
+        </button>
+        <button class="effect-card" data-effect="ascii">
+          <div class="effect-preview preview-ascii"></div>
+          <span class="effect-name">ASCII Code</span>
+        </button>
+        <button class="effect-card" data-effect="magnifier">
+          <div class="effect-preview preview-magnify"></div>
+          <span class="effect-name">Magnifier</span>
+        </button>
+        <button class="effect-card" data-effect="vortex">
+          <div class="effect-preview preview-vortex"></div>
+          <span class="effect-name">Vortex Twirl</span>
+        </button>
+        <button class="effect-card" data-effect="invert">
+          <div class="effect-preview preview-invert"></div>
+          <span class="effect-name">Invert X-Ray</span>
+        </button>
+      </div>
+
+      <!-- Dynamic Effect Parameter Tuning Controls -->
+      <div class="effect-params">
+        <div class="param-slider-group">
+          <label for="param-intensity">Intensitas Efek: <span id="val-intensity">80%</span></label>
+          <input type="range" id="param-intensity" min="10" max="100" value="80" class="cyber-range" />
+        </div>
+
+        <div class="param-slider-group">
+          <label for="param-scale">Ukuran Skala / Pixel: <span id="val-scale">12px</span></label>
+          <input type="range" id="param-scale" min="4" max="32" value="12" class="cyber-range" />
+        </div>
+
+        <div class="param-slider-group">
+          <label for="param-hud-style">Gaya HUD Laser: <span id="val-hud">Neon Cyan</span></label>
+          <select id="param-hud-style" class="select-cyber-sm">
+            <option value="cyan">Neon Cyan</option>
+            <option value="magenta">Cyber Magenta</option>
+            <option value="lime">Matrix Lime</option>
+            <option value="amber">Amber Sci-Fi</option>
+          </select>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Modal Help / Instructions Guide -->
+    <div id="modal-help" class="modal-backdrop hidden">
+      <div class="modal-card glass-card">
+        <div class="modal-header">
+          <h3>📖 Cara Menggunakan AR Hand Framing Studio</h3>
+          <button id="btn-close-help" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="help-step">
+            <span class="step-num">1</span>
+            <div class="step-desc">
+              <h4>Buka Izin Kamera</h4>
+              <p>Izinkan browser mengakses webcam Anda. Pastikan pencahayaan cukup agar tangan terdeteksi dengan presisi.</p>
+            </div>
+          </div>
+
+          <div class="help-step">
+            <span class="step-num">2</span>
+            <div class="step-desc">
+              <h4>Mode 1 Tangan (Pinch Framing)</h4>
+              <p>Buka tangan Anda, dekatkan/jauhkan <strong>Ujung Telunjuk (Landmark #8)</strong> dan <strong>Ujung Jempol (Landmark #4)</strong> untuk membentuk segi empat dinamis.</p>
+            </div>
+          </div>
+
+          <div class="help-step">
+            <span class="step-num">3</span>
+            <div class="step-desc">
+              <h4>Mode 2 Tangan (Director's Frame)</h4>
+              <p>Gunakan kedua tangan membentuk bingkai kamera (telunjuk & jempol tangan kiri untuk sudut kiri-atas, tangan kanan untuk sudut kanan-bawah).</p>
+            </div>
+          </div>
+
+          <div class="help-step">
+            <span class="step-num">4</span>
+            <div class="step-desc">
+              <h4>Pilih Efek Kamera</h4>
+              <p>Klik salah satu efek di panel bawah (Cyber Neon, 8-Bit Pixel, Thermal, Glitch, Matrix Rain, dll.). Efek akan <strong>otomatis terisolasi di dalam segi empat jari Anda</strong>!</p>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-got-it" class="btn-cyber btn-primary">Saya Mengerti, Mulai!</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
