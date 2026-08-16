@@ -222,6 +222,12 @@ class App {
     document.getElementById('btn-snapshot').addEventListener('click', () => this.takeSnapshot());
     document.getElementById('btn-record').addEventListener('click', () => this.toggleRecording());
 
+    document.getElementById('btn-force-reload')?.addEventListener('click', () => {
+      const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.set('t', Date.now());
+      window.location.href = currentUrl.toString();
+    });
+
     const modalHelp = document.getElementById('modal-help');
     document.getElementById('btn-help').addEventListener('click', () => {
       modalHelp.classList.remove('hidden');
