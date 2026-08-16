@@ -1,5 +1,5 @@
 /* ==========================================================================
-   HAND TRACKER ENGINE v2.1 — ROBUST MOBILE CAMERA INITIALIZER
+   HAND TRACKER ENGINE v2.2 — MOBILE 60 FPS OPTIMIZED
    ========================================================================== */
 
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
@@ -32,14 +32,14 @@ class KalmanPoint {
     const innovY = measuredY - predictedY;
 
     const innovMag = Math.hypot(innovX, innovY);
-    const gain = Math.min(0.95, Math.max(0.5, innovMag / 15));
+    const gain = Math.min(0.95, Math.max(0.4, innovMag / 15));
 
     this.x = predictedX + gain * innovX;
     this.y = predictedY + gain * innovY;
 
     const measuredVx = (measuredX - (this.x - this.vx * dt)) / dt;
     const measuredVy = (measuredY - (this.y - this.vy * dt)) / dt;
-    const velGain = 0.6;
+    const velGain = 0.5;
     this.vx = this.vx + velGain * (measuredVx - this.vx);
     this.vy = this.vy + velGain * (measuredVy - this.vy);
 
@@ -72,6 +72,7 @@ export class HandTracker {
     this.isMirrored = true;
     this.lastTimestamp = -1;
     this.lastFrameTime = performance.now();
+    this.lastAiTime = 0;
     this.fps = 60;
 
     this.kalmanFilters = [
@@ -90,7 +91,7 @@ export class HandTracker {
 
     this.lockedBox = null;
     this.missedFrames = 0;
-    this.maxGraceFrames = 20;
+    this.maxGraceFrames = 25;
 
     this.rafId = null;
     this.onFrameCallback = null;
@@ -100,12 +101,10 @@ export class HandTracker {
     this.videoEl = videoElement;
     this.canvasEl = canvasElement;
 
-    // 1. Initialize MediaPipe WASM Vision tasks
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
     );
 
-    // 2. Create HandLandmarker (Try GPU delegate, fallback to CPU if WebGL fails on mobile)
     try {
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
@@ -114,9 +113,9 @@ export class HandTracker {
         },
         runningMode: "VIDEO",
         numHands: 2,
-        minHandDetectionConfidence: 0.4,
-        minHandPresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minHandDetectionConfidence: 0.35,
+        minHandPresenceConfidence: 0.35,
+        minTrackingConfidence: 0.35
       });
     } catch (gpuErr) {
       console.warn("GPU delegate unavailable, falling back to CPU:", gpuErr);
@@ -127,24 +126,22 @@ export class HandTracker {
         },
         runningMode: "VIDEO",
         numHands: 2,
-        minHandDetectionConfidence: 0.4,
-        minHandPresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minHandDetectionConfidence: 0.35,
+        minHandPresenceConfidence: 0.35,
+        minTrackingConfidence: 0.35
       });
     }
 
-    // 3. Multi-Tier Camera Stream Fallback for Mobile & Desktop
     let stream = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 640 }, // Optimized resolution for mobile high FPS
+          height: { ideal: 480 }
         }
       });
     } catch (e1) {
-      console.warn("Ideal camera constraints failed, trying basic video:", e1);
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       } catch (e2) {
@@ -174,36 +171,37 @@ export class HandTracker {
       }
 
       const timestamp = this.videoEl.currentTime;
-      if (timestamp === this.lastTimestamp) return;
-      this.lastTimestamp = timestamp;
-
-      const results = this.handLandmarker.detectForVideo(this.videoEl, now);
-
-      const width = this.canvasEl.width;
-      const height = this.canvasEl.height;
       const dt = Math.max(frameDelta, 1 / 120);
-      const handCount = results.landmarks ? results.landmarks.length : 0;
 
-      if (handCount > 0) {
-        this.missedFrames = 0;
-        this.processLandmarksKalman(results.landmarks, width, height, dt);
+      // AI Inference Throttled to ~30 FPS on Mobile (every 30ms) to save CPU/thermal budget
+      // While canvas render loop runs at buttery smooth 60 FPS using Kalman Extrapolation!
+      const aiMinInterval = 30; // 30ms = 33 FPS AI rate
+      const shouldRunAi = (now - this.lastAiTime) >= aiMinInterval && timestamp !== this.lastTimestamp;
 
-        if (this.mode !== 'lock') {
-          this.computeFramingQuad(width, height);
+      let handCount = 0;
+
+      if (shouldRunAi) {
+        this.lastAiTime = now;
+        this.lastTimestamp = timestamp;
+
+        const results = this.handLandmarker.detectForVideo(this.videoEl, now);
+        handCount = results.landmarks ? results.landmarks.length : 0;
+
+        if (handCount > 0) {
+          this.missedFrames = 0;
+          this.processLandmarksKalman(results.landmarks, this.canvasEl.width, this.canvasEl.height, dt);
+          if (this.mode !== 'lock') {
+            this.computeFramingQuad(this.canvasEl.width, this.canvasEl.height);
+          }
+        } else {
+          this.handleTrackingLoss(dt);
         }
       } else {
-        if (this.mode !== 'lock') {
-          this.missedFrames++;
-          if (this.missedFrames <= this.maxGraceFrames && this.smoothedLandmarks.length > 0) {
-            this.extrapolateLandmarks(width, height, dt);
-            this.computeFramingQuad(width, height);
-            this.currentBox.isDetected = true;
-          } else {
-            this.currentBox.isDetected = false;
-            if (this.missedFrames > this.maxGraceFrames + 5) {
-              this.kalmanFilters.forEach(hand => hand.forEach(kf => kf.reset()));
-              this.smoothedLandmarks = [];
-            }
+        // Between AI inference ticks: extrapolate landmarks for 60 FPS fluidity
+        if (this.currentBox.isDetected && this.smoothedLandmarks.length > 0) {
+          this.extrapolateLandmarks(this.canvasEl.width, this.canvasEl.height, dt);
+          if (this.mode !== 'lock') {
+            this.computeFramingQuad(this.canvasEl.width, this.canvasEl.height);
           }
         }
       }
@@ -214,16 +212,31 @@ export class HandTracker {
 
       if (this.onFrameCallback) {
         this.onFrameCallback({
-          results,
+          results: null,
           box: this.currentBox,
           smoothedLandmarks: this.smoothedLandmarks,
           fps: this.fps,
-          handCount: handCount > 0 ? handCount : (this.currentBox.isDetected ? 1 : 0)
+          handCount: this.currentBox.isDetected ? 1 : 0
         });
       }
     };
 
     loop();
+  }
+
+  handleTrackingLoss(dt) {
+    this.missedFrames++;
+    if (this.missedFrames <= this.maxGraceFrames && this.smoothedLandmarks.length > 0) {
+      this.extrapolateLandmarks(this.canvasEl.width, this.canvasEl.height, dt);
+      this.computeFramingQuad(this.canvasEl.width, this.canvasEl.height);
+      this.currentBox.isDetected = true;
+    } else {
+      this.currentBox.isDetected = false;
+      if (this.missedFrames > this.maxGraceFrames + 5) {
+        this.kalmanFilters.forEach(hand => hand.forEach(kf => kf.reset()));
+        this.smoothedLandmarks = [];
+      }
+    }
   }
 
   processLandmarksKalman(rawLandmarks, width, height, dt) {
