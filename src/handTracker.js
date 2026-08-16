@@ -1,5 +1,5 @@
 /* ==========================================================================
-   HAND TRACKER ENGINE v5.0 — CAMERA-FIRST NON-BLOCKING PIPELINE
+   HAND TRACKER ENGINE v5.1 — RELIABLE OFFICIAL MODEL INITIALIZER
    ========================================================================== */
 
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
@@ -105,7 +105,7 @@ export class HandTracker {
     this.videoEl = videoElement;
     this.canvasEl = canvasElement;
 
-    // STEP 1: OPEN CAMERA STREAM FIRST (CAMERA-FIRST ARCHITECTURE)
+    // STEP 1: OPEN CAMERA STREAM FIRST
     let stream = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -120,7 +120,7 @@ export class HandTracker {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       } catch (e2) {
         console.error("Fatal Camera Permission/Device Error:", e2);
-        throw e2; // Re-throw only if camera hardware/permission is blocked
+        throw e2;
       }
     }
 
@@ -128,25 +128,25 @@ export class HandTracker {
     await this.videoEl.play();
     this.isTracking = true;
 
-    // Start 60 FPS Render Loop Immediately
     this.startLoop();
 
-    // STEP 2: LOAD AI MODEL ASYNCHRONOUSLY IN BACKGROUND (NON-BLOCKING)
+    // STEP 2: LOAD AI MODEL ASYNCHRONOUSLY WITH VERIFIED MODEL URL
     this.loadAiModelInBackground();
   }
 
   async loadAiModelInBackground() {
     try {
       const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
       );
 
-      const modelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/lite/latest/hand_landmarker.task";
+      // Official verified Google Storage model URL
+      const officialModelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
 
       try {
         this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: modelUrl,
+            modelAssetPath: officialModelUrl,
             delegate: "GPU"
           },
           runningMode: "VIDEO",
@@ -156,9 +156,10 @@ export class HandTracker {
           minTrackingConfidence: 0.35
         });
       } catch (gpuErr) {
+        console.warn("GPU delegate unavailable, trying CPU delegate:", gpuErr);
         this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: modelUrl,
+            modelAssetPath: officialModelUrl,
             delegate: "CPU"
           },
           runningMode: "VIDEO",
@@ -170,9 +171,9 @@ export class HandTracker {
       }
 
       this.aiLoaded = true;
-      console.log("MediaPipe AI Model loaded successfully in background.");
+      console.log("MediaPipe HandLandmarker AI Model loaded successfully!");
     } catch (aiErr) {
-      console.warn("AI Model background load warning:", aiErr);
+      console.error("AI Model background load failed:", aiErr);
     }
   }
 
@@ -192,8 +193,7 @@ export class HandTracker {
       const timestamp = this.videoEl.currentTime;
       const dt = Math.max(frameDelta, 1 / 120);
 
-      // Async AI Inference only when AI model is loaded
-      const aiMinInterval = this.isMobile ? 40 : 16;
+      const aiMinInterval = this.isMobile ? 33 : 16;
       if (this.aiLoaded && this.handLandmarker && !this.isAiBusy && (now - this.lastAiTime) >= aiMinInterval && timestamp !== this.lastTimestamp) {
         this.lastAiTime = now;
         this.lastTimestamp = timestamp;
