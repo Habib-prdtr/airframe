@@ -1,22 +1,15 @@
 /* ==========================================================================
-   HAND TRACKER ENGINE v2.0 — TOTAL REWRITE
-   
-   Powered by:
-   1. MediaPipe Tasks Vision HandLandmarker (GPU WASM SIMD Delegate)
-   2. Kalman Predictive Velocity Filter (predict WHERE finger WILL BE)
-   3. requestAnimationFrame zero-copy rendering pipeline
-   4. Trajectory Extrapolation on tracking loss
+   HAND TRACKER ENGINE v2.1 — ROBUST MOBILE CAMERA INITIALIZER
    ========================================================================== */
 
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
-// ---- Kalman-style 1D Predictive Filter ----
 class KalmanPoint {
   constructor() {
     this.x = 0;
     this.y = 0;
-    this.vx = 0;      // velocity X
-    this.vy = 0;      // velocity Y
+    this.vx = 0;
+    this.vy = 0;
     this.initialized = false;
   }
 
@@ -32,25 +25,18 @@ class KalmanPoint {
 
     if (dt <= 0) dt = 1 / 60;
 
-    // Predict step: where do we EXPECT the point to be based on velocity
     const predictedX = this.x + this.vx * dt;
     const predictedY = this.y + this.vy * dt;
 
-    // Innovation (difference between measured and predicted)
     const innovX = measuredX - predictedX;
     const innovY = measuredY - predictedY;
 
-    // Adaptive Kalman Gain based on innovation magnitude
-    // Large innovation (fast motion) -> trust measurement more (gain -> 0.95)
-    // Small innovation (stable) -> trust prediction more (gain -> 0.5)
     const innovMag = Math.hypot(innovX, innovY);
     const gain = Math.min(0.95, Math.max(0.5, innovMag / 15));
 
-    // Update position with blended estimate
     this.x = predictedX + gain * innovX;
     this.y = predictedY + gain * innovY;
 
-    // Update velocity estimate (exponential moving average)
     const measuredVx = (measuredX - (this.x - this.vx * dt)) / dt;
     const measuredVy = (measuredY - (this.y - this.vy * dt)) / dt;
     const velGain = 0.6;
@@ -60,10 +46,8 @@ class KalmanPoint {
     return { x: this.x, y: this.y };
   }
 
-  // Extrapolate position when measurement is missing (tracking lost)
   extrapolate(dt) {
     if (!this.initialized) return { x: this.x, y: this.y };
-    // Decay velocity gradually during extrapolation
     this.vx *= 0.85;
     this.vy *= 0.85;
     this.x += this.vx * dt;
@@ -78,7 +62,6 @@ class KalmanPoint {
   }
 }
 
-// ---- Main HandTracker Engine ----
 export class HandTracker {
   constructor() {
     this.handLandmarker = null;
@@ -91,17 +74,13 @@ export class HandTracker {
     this.lastFrameTime = performance.now();
     this.fps = 60;
 
-    // Kalman Filters for key landmarks per hand (up to 2 hands × 21 landmarks)
-    // We track ALL 21 landmarks with Kalman for maximum smoothness
     this.kalmanFilters = [
       Array.from({ length: 21 }, () => new KalmanPoint()),
       Array.from({ length: 21 }, () => new KalmanPoint())
     ];
 
-    // Filtered landmarks output
     this.smoothedLandmarks = [];
 
-    // ROI Box
     this.currentBox = {
       x: 0, y: 0, width: 0, height: 0, angle: 0,
       center: { x: 0, y: 0 },
@@ -110,12 +89,9 @@ export class HandTracker {
     };
 
     this.lockedBox = null;
-
-    // Grace period for tracking loss
     this.missedFrames = 0;
-    this.maxGraceFrames = 20; // ~600ms at 30fps — very generous extrapolation window
+    this.maxGraceFrames = 20;
 
-    // RAF loop control
     this.rafId = null;
     this.onFrameCallback = null;
   }
@@ -124,62 +100,64 @@ export class HandTracker {
     this.videoEl = videoElement;
     this.canvasEl = canvasElement;
 
-    // 1. Initialize MediaPipe Tasks Vision WASM runtime
+    // 1. Initialize MediaPipe WASM Vision tasks
     const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
     );
 
-    // 2. Create HandLandmarker with GPU delegate (fallback to CPU if GPU fails)
-    const options = {
-      baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
-        delegate: "GPU"
-      },
-      runningMode: "VIDEO",
-      numHands: 2,
-      minHandDetectionConfidence: 0.4,
-      minHandPresenceConfidence: 0.4,
-      minTrackingConfidence: 0.4
-    };
-
+    // 2. Create HandLandmarker (Try GPU delegate, fallback to CPU if WebGL fails on mobile)
     try {
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, options);
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 2,
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
+      });
     } catch (gpuErr) {
-      console.warn("GPU delegate failed, falling back to CPU delegate:", gpuErr);
-      options.baseOptions.delegate = "CPU";
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, options);
+      console.warn("GPU delegate unavailable, falling back to CPU:", gpuErr);
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+          delegate: "CPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 2,
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
+      });
     }
 
-    // 3. Start Webcam stream with facingMode: "user" (default for mobile)
-    await this.startCamera(deviceId);
-
-    // 4. Start the requestAnimationFrame render loop
-    this.startLoop();
-  }
-
-  async startCamera(deviceId = null) {
-    if (this.videoEl && this.videoEl.srcObject) {
-      this.videoEl.srcObject.getTracks().forEach(t => t.stop());
+    // 3. Multi-Tier Camera Stream Fallback for Mobile & Desktop
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+    } catch (e1) {
+      console.warn("Ideal camera constraints failed, trying basic video:", e1);
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch (e2) {
+        console.error("Camera access failed:", e2);
+        throw e2;
+      }
     }
 
-    const videoConstraints = {
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 60, min: 30 }
-    };
-
-    if (deviceId) {
-      videoConstraints.deviceId = { exact: deviceId };
-    } else {
-      videoConstraints.facingMode = "user";
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: videoConstraints
-    });
     this.videoEl.srcObject = stream;
     await this.videoEl.play();
     this.isTracking = true;
+
+    this.startLoop();
   }
 
   startLoop() {
@@ -189,20 +167,16 @@ export class HandTracker {
       if (!this.videoEl || this.videoEl.readyState < 2) return;
 
       const now = performance.now();
-
-      // FPS Calculation
       const frameDelta = (now - this.lastFrameTime) / 1000;
       this.lastFrameTime = now;
       if (frameDelta > 0) {
         this.fps = Math.round(0.9 * this.fps + 0.1 * (1 / frameDelta));
       }
 
-      // Deduplicate frames (skip if video hasn't advanced)
       const timestamp = this.videoEl.currentTime;
       if (timestamp === this.lastTimestamp) return;
       this.lastTimestamp = timestamp;
 
-      // Run HandLandmarker inference (synchronous in VIDEO mode)
       const results = this.handLandmarker.detectForVideo(this.videoEl, now);
 
       const width = this.canvasEl.width;
@@ -218,17 +192,14 @@ export class HandTracker {
           this.computeFramingQuad(width, height);
         }
       } else {
-        // TRAJECTORY EXTRAPOLATION during tracking loss
         if (this.mode !== 'lock') {
           this.missedFrames++;
           if (this.missedFrames <= this.maxGraceFrames && this.smoothedLandmarks.length > 0) {
-            // Extrapolate all landmarks along their velocity vectors
             this.extrapolateLandmarks(width, height, dt);
             this.computeFramingQuad(width, height);
             this.currentBox.isDetected = true;
           } else {
             this.currentBox.isDetected = false;
-            // Reset Kalman filters after extended tracking loss
             if (this.missedFrames > this.maxGraceFrames + 5) {
               this.kalmanFilters.forEach(hand => hand.forEach(kf => kf.reset()));
               this.smoothedLandmarks = [];
@@ -279,7 +250,6 @@ export class HandTracker {
 
       return hand.map((lm, lmIdx) => {
         const extrap = filters[lmIdx].extrapolate(dt);
-        // Clamp within canvas bounds
         extrap.x = Math.max(0, Math.min(width, extrap.x));
         extrap.y = Math.max(0, Math.min(height, extrap.y));
         return { x: extrap.x, y: extrap.y, z: lm.z || 0 };
