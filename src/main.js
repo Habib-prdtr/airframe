@@ -59,8 +59,10 @@ class App {
       this.loadingOverlay.classList.add('hidden');
     } catch (err) {
       console.error('Gagal menginisialisasi kamera atau MediaPipe:', err);
-      this.loadingOverlay.querySelector('p').textContent = 
-        'Gagal mengakses kamera. Mohon pastikan webcam terhubung dan beri izin akses di browser.';
+      const msg = err.name === 'NotAllowedError' 
+        ? 'Akses kamera ditolak. Mohon izinkan akses kamera di browser Anda.' 
+        : `Gagal memuat AI / Kamera (${err.message || err}). Pastikan browser mendukung WebGL & kamera terhubung.`;
+      this.loadingOverlay.querySelector('p').textContent = msg;
     }
   }
 

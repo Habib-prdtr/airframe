@@ -126,11 +126,11 @@ export class HandTracker {
 
     // 1. Initialize MediaPipe Tasks Vision WASM runtime
     const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
     );
 
-    // 2. Create HandLandmarker with GPU delegate for maximum speed
-    this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    // 2. Create HandLandmarker with GPU delegate (fallback to CPU if GPU fails)
+    const options = {
       baseOptions: {
         modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
         delegate: "GPU"
@@ -140,7 +140,15 @@ export class HandTracker {
       minHandDetectionConfidence: 0.4,
       minHandPresenceConfidence: 0.4,
       minTrackingConfidence: 0.4
-    });
+    };
+
+    try {
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, options);
+    } catch (gpuErr) {
+      console.warn("GPU delegate failed, falling back to CPU delegate:", gpuErr);
+      options.baseOptions.delegate = "CPU";
+      this.handLandmarker = await HandLandmarker.createFromOptions(vision, options);
+    }
 
     // 3. Start Webcam stream with getUserMedia (direct control, no Camera utils)
     const stream = await navigator.mediaDevices.getUserMedia({
