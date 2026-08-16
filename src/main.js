@@ -45,6 +45,7 @@ class App {
 
   async init() {
     this.setupCanvasSize();
+    this.videoEl.addEventListener('loadedmetadata', () => this.setupCanvasSize());
     window.addEventListener('resize', () => this.setupCanvasSize());
 
     this.bindEvents();
@@ -54,7 +55,12 @@ class App {
       await this.tracker.init(this.videoEl, this.canvasEl);
 
       // Hide loading spinner on first frame
-      this.tracker.onFrameCallback = (data) => this.onFrameUpdate(data);
+      this.tracker.onFrameCallback = (data) => {
+        if (this.canvasEl.width !== 1280 && this.videoEl.videoWidth) {
+          this.setupCanvasSize();
+        }
+        this.onFrameUpdate(data);
+      };
 
       this.loadingOverlay.classList.add('hidden');
     } catch (err) {
@@ -67,8 +73,17 @@ class App {
   }
 
   setupCanvasSize() {
-    this.canvasEl.width = 1280;
-    this.canvasEl.height = 720;
+    const vw = this.videoEl.videoWidth || 1280;
+    const vh = this.videoEl.videoHeight || 720;
+    const aspect = vw / vh;
+
+    if (aspect >= 1) {
+      this.canvasEl.width = 1280;
+      this.canvasEl.height = Math.round(1280 / aspect);
+    } else {
+      this.canvasEl.height = 1280;
+      this.canvasEl.width = Math.round(1280 * aspect);
+    }
   }
 
   async enumerateCameras() {

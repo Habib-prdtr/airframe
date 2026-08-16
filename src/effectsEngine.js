@@ -30,13 +30,27 @@ export class EffectsEngine {
     const width = ctx.canvas.width;
     const height = ctx.canvas.height;
 
-    // 1. Draw Base Video Frame
+    // 1. Draw Base Video Frame with aspect-ratio cover (prevents gepeng/squished camera)
+    const vWidth = video.videoWidth || width;
+    const vHeight = video.videoHeight || height;
+    const vAspect = vWidth / vHeight;
+    const cAspect = width / height;
+
+    let sx = 0, sy = 0, sw = vWidth, sh = vHeight;
+    if (vAspect > cAspect) {
+      sw = vHeight * cAspect;
+      sx = (vWidth - sw) / 2;
+    } else if (vAspect < cAspect) {
+      sh = vWidth / cAspect;
+      sy = (vHeight - sh) / 2;
+    }
+
     ctx.save();
     if (isMirrored) {
       ctx.translate(width, 0);
       ctx.scale(-1, 1);
     }
-    ctx.drawImage(video, 0, 0, width, height);
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
     ctx.restore();
 
     // 2. Skip if no box detected
