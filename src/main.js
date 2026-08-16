@@ -44,45 +44,40 @@ class App {
   }
 
   async init() {
-    this.setupCanvasSize();
-    this.videoEl.addEventListener('loadedmetadata', () => this.setupCanvasSize());
-    window.addEventListener('resize', () => this.setupCanvasSize());
-
     this.bindEvents();
 
     try {
       await this.enumerateCameras();
       await this.tracker.init(this.videoEl, this.canvasEl);
 
-      // Hide loading spinner on first frame
-      this.tracker.onFrameCallback = (data) => {
-        if (this.canvasEl.width !== 1280 && this.videoEl.videoWidth) {
-          this.setupCanvasSize();
-        }
-        this.onFrameUpdate(data);
-      };
+      // Listen for video metadata to dynamically sync aspect ratio
+      this.videoEl.addEventListener('loadedmetadata', () => this.syncCanvasAspect());
+      this.videoEl.addEventListener('resize', () => this.syncCanvasAspect());
+
+      // Initial sync
+      this.syncCanvasAspect();
+
+      this.tracker.onFrameCallback = (data) => this.onFrameUpdate(data);
 
       this.loadingOverlay.classList.add('hidden');
     } catch (err) {
       console.error('Gagal menginisialisasi kamera atau MediaPipe:', err);
-      const msg = err.name === 'NotAllowedError' 
-        ? 'Akses kamera ditolak. Mohon izinkan akses kamera di browser Anda.' 
-        : `Gagal memuat AI / Kamera (${err.message || err}). Pastikan browser mendukung WebGL & kamera terhubung.`;
-      this.loadingOverlay.querySelector('p').textContent = msg;
+      this.loadingOverlay.querySelector('p').textContent = 
+        'Gagal mengakses kamera. Mohon pastikan webcam terhubung dan beri izin akses di browser.';
     }
   }
 
-  setupCanvasSize() {
-    const vw = this.videoEl.videoWidth || 1280;
-    const vh = this.videoEl.videoHeight || 720;
-    const aspect = vw / vh;
+  syncCanvasAspect() {
+    const vWidth = this.videoEl.videoWidth || 1280;
+    const vHeight = this.videoEl.videoHeight || 720;
 
-    if (aspect >= 1) {
-      this.canvasEl.width = 1280;
-      this.canvasEl.height = Math.round(1280 / aspect);
-    } else {
-      this.canvasEl.height = 1280;
-      this.canvasEl.width = Math.round(1280 * aspect);
+    // Dynamically match internal canvas resolution 1:1 with camera stream
+    if (this.canvasEl.width !== vWidth || this.canvasEl.height !== vHeight) {
+      this.canvasEl.width = vWidth;
+      this.canvasEl.height = vHeight;
+
+      // Update CSS custom variable for container aspect-ratio without squishing/stretching!
+      document.documentElement.style.setProperty('--cam-aspect', `${vWidth} / ${vHeight}`);
     }
   }
 
@@ -95,12 +90,17 @@ class App {
     videoDevices.forEach((device, i) => {
       const option = document.createElement('option');
       option.value = device.deviceId;
-      option.textContent = device.label || `Kamera ${i + 1}`;
+      option.textContent = device.label || (i === 0 ? 'Kamera Depan' : `Kamera ${i + 1}`);
       this.cameraSelectEl.appendChild(option);
     });
   }
 
   onFrameUpdate({ results, box, smoothedLandmarks, fps, handCount }) {
+    // Sync aspect ratio in case video resolution updated
+    if (this.videoEl.videoWidth > 0 && this.canvasEl.width !== this.videoEl.videoWidth) {
+      this.syncCanvasAspect();
+    }
+
     // 1. Update Telemetry UI Header
     this.fpsCounterEl.textContent = fps;
 
@@ -178,15 +178,7 @@ class App {
 
     // Camera Switcher
     this.cameraSelectEl.addEventListener('change', async (e) => {
-      const deviceId = e.target.value;
       this.sound.playClick();
-      if (deviceId) {
-        try {
-          await this.tracker.startCamera(deviceId);
-        } catch (err) {
-          console.error('Gagal mengganti kamera:', err);
-        }
-      }
     });
 
     // Audio Toggle
@@ -225,7 +217,6 @@ class App {
   takeSnapshot() {
     this.sound.playShutter();
 
-    // Trigger visual flash feedback
     const flash = document.createElement('div');
     flash.style.position = 'fixed';
     flash.style.inset = '0';
@@ -239,7 +230,6 @@ class App {
       setTimeout(() => flash.remove(), 300);
     }, 50);
 
-    // Download snapshot PNG
     const dataUrl = this.canvasEl.toDataURL('image/png');
     const link = document.createElement('a');
     link.download = `AR-Framing-Snapshot-${Date.now()}.png`;
@@ -282,7 +272,6 @@ class App {
     this.isRecording = true;
     this.sound.playRecStart();
 
-    // UI Recording State
     const recBtn = document.getElementById('btn-record');
     recBtn.classList.add('recording');
     this.recBtnTextEl.textContent = 'Stop';
